@@ -1,0 +1,120 @@
+# Compute the log-determinant of a matrix
+ldet <- function(X) {
+  if(!is.matrix(X)) return(log(X))
+  determinant(X,logarithm = TRUE)$modulus
+}
+
+########## VB - function: Beta ###############
+VB_beta <- function(input_x, input_y, input_omega, input_prior){
+  var_beta_inv <- crossprod(input_x*input_omega, input_x) + input_prior$Sigma_inv
+  var_beta <- solve(var_beta_inv)
+  m_ome <- crossprod(input_x, input_y-1/2)
+  mu_beta <- var_beta %*% (m_ome + input_prior$mu_Sigma)
+  return(cbind(mu_beta,var_beta))
+}
+
+######### VB - function: Y_tilde ################
+### when data_z=0
+cal_prob0 <- function(a, x_a, input_beta, Se1, Sp1){
+  
+  p1 <- exp((a>0)*log(1-Se1) + (1-(a>0))*log(Sp1) + 
+              a*(x_a %*% input_beta)) 
+  return(p1)
+}
+
+VB_ytilde0 <- function(input_x_sub, input_mu_beta,
+                       input_Se, input_Sp){
+  x_a <- input_x_sub
+  
+  ## Calculate p_a for all 2 possible combinations under a pool size of 1
+  p_sub1 <- cal_prob0(0, x_a, input_mu_beta, input_Se, input_Sp)
+  p_sub2 <- cal_prob0(1, x_a, input_mu_beta, input_Se, input_Sp)
+  
+  p_denominator <- sum(p_sub1, p_sub2)
+  
+  p_cal1 <- p_sub2/p_denominator
+  
+  return(p_cal1)
+}
+
+### when data_z=1 
+cal_prob1 <- function(a, x_a, input_beta, input_Se, input_Sp){
+  Se1 <- input_Se # pool sensitivity
+  Sp1 <- input_Sp # pool specificity
+  
+  p1 <- exp((a>0)*log(Se1) + (1-(a>0))*log(1-Sp1) + 
+              a*(x_a %*% input_beta))
+  return(p1)
+}
+
+VB_ytilde1 <- function(input_x_sub, input_mu_beta, 
+                       input_Se, input_Sp){
+  x_a <- input_x_sub
+  
+  ## Calculate p_a for all 2 combinations under a pool size of 1
+  p_sub1 <- cal_prob1(0, x_a, input_mu_beta, input_Se, input_Sp)
+  p_sub2 <- cal_prob1(1, x_a, input_mu_beta, input_Se, input_Sp)
+  
+  p_denominator <- sum(p_sub1, p_sub2)
+  
+  p_cal1 <- p_sub2/p_denominator
+  
+  return(p_cal1)
+}
+
+############ Calculate Y_tilde Joint Density Function #####
+cal_density_Y0 <- function(Ey, x_a, input_beta, Se1, Sp1){
+  p1 <- Ey*log(1-Se1) + (1-Ey)*log(Sp1) + 
+    Ey*(x_a %*% input_beta) 
+  return(p1)
+}
+
+cal_density_Y1 <- function(Ey, x_a, input_beta, Se1, Sp1){
+  p1 <- Ey*log(Se1) + (1-Ey)*log(1-Sp1) + 
+    Ey*(x_a %*% input_beta) 
+  return(p1)
+}
+
+## H Manually Calculation - expectation of second derivatives
+cal_Hessian_it <- function(mean_beta, mean_y, input_x){
+  p_est <- plogis(input_x %*% mean_beta)
+  pq_est <- p_est*(1-p_est)
+  
+  p1 <- sum(-pq_est)
+  p2 <- sum(-input_x[,2]^2*pq_est)
+  p3 <- sum(-input_x[,3]^2*pq_est)
+  
+  p12 <- sum(-input_x[,2]*pq_est)
+  p13 <- sum(-input_x[,3]*pq_est)
+  p23 <- sum(-(input_x[,2]*input_x[,3])*pq_est)
+  
+  Hessian_manu <- matrix(NA, nrow=dim(input_x)[2], ncol=dim(input_x)[2])
+  Hessian_manu <- diag(c(p1,p2,p3))
+  Hessian_manu[1,2] <- Hessian_manu[2,1] <- p12
+  Hessian_manu[1,3] <- Hessian_manu[3,1] <- p13
+  Hessian_manu[2,3] <- Hessian_manu[3,2] <- p23
+  
+  return(Hessian_manu)
+}
+
+## Covariance of first derivatives
+cal_covar_it <- function(mean_y, input_x){
+  # Define the indices for combinations
+  indices <- t(combn(c(1:dim(input_x)[2]),2))
+  
+  Ey1min <- mean_y * (1-mean_y)
+  
+  var_y <- colSums(input_x^2 * Ey1min)
+  cov_d0d1 <- sum(input_x[,1]*input_x[,2]*Ey1min) #d1: beta0 vs beta1
+  cov_d0d2 <- sum(input_x[,1]*input_x[,3]*Ey1min) #d1: beta0 vs beta2
+  cov_d1d2 <- sum(input_x[,2]*input_x[,3]*Ey1min) #d1: beta1 vs beta2
+  cov_xy <- c(cov_d0d1, cov_d0d2, cov_d1d2)
+  
+  cov_beta <- diag(var_y)
+  # Assign values from cov_xy to cov_beta using loop
+  for (i in 1:nrow(indices)) {
+    cov_beta[indices[i, 1], indices[i, 2]] <- cov_beta[indices[i, 2], indices[i, 1]] <- cov_xy[i]
+  }
+  
+  return(cov_beta)
+}  
